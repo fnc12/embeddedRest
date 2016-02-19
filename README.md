@@ -44,7 +44,7 @@ if(response.statusCode()==200){
 
 # POST request example
 
-We need to register a user.
+We need to register a user and pass sone arguments (login, email, password and age) to body as a json object.
 ```
 UrlRequest request;
 request.host("api.my-domain.com");
