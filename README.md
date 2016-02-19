@@ -9,7 +9,7 @@ It allows to send synchronous HTTP 1.1 requests and gives pretty simple interfac
 * port
 * HTTP headers
 
-embeddedRest is a lightweight header-only library designed especially for mobile apps (iOS and Android).
+embeddedRest is a lightweight header-only library designed especially for mobile apps (iOS and Android) but it also can compile at any platform familiar with C++11.
 
 # GET request example
 
