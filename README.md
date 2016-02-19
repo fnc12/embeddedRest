@@ -13,7 +13,7 @@ embeddedRest is a lightweight header-only library designed especially for mobile
 
 # GET request example
 
-For example we need to request countries from `api.vk.com`. 
+For example we need to request cities from `api.vk.com`. 
 
 **Url** = "http://api.vk.com/method/database.getCities?lang=ru&country_id=1&count=1000&need_all=1"
 
