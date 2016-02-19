@@ -72,3 +72,14 @@ if(response.statusCode()==200){
 # Add embeddedRest to your project.
 
 Just add headers from `Classes` folder into your project header directory and `#include` them. Also `embeddedRest` has dependency - [rapidjson](https://github.com/miloyip/rapidjson/) json-processor. `rapidjson` is also a header-only library so it is very easy to include it to your project.
+
+# Advanced
+
+**Timeout**
+
+Every `UrlRequest` instance has 30 seconds default timeout. If you want to change it just assign `.timeout` value to your request.
+```
+UrlRequest request;
+request.timeout={10,0};     //  10 seconds and 0 microseconds..
+```
+`timeout` property has `struct timeval` type. This type is declared in C standart library and represents time with microseconds precision.
