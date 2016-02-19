@@ -1,7 +1,7 @@
 # embeddedRest
 A little library for making url requests in C++.
 
-It allows to send synchronous HTTP 1.1 requests and gives pretty simpe interface to specify request parameters such as 
+It allows to send synchronous HTTP 1.1 requests and gives pretty simple interface to specify request parameters such as 
 
 * HTTP method
 * get parameters
