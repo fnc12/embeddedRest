@@ -68,3 +68,7 @@ if(response.statusCode()==200){
   cout<<"status code = "<<response.statusCode()<<", description = "<<response.statusDescription()<<endl;
 } 
 ```
+
+# Add embeddedRest to your project.
+
+Just add headers from `Classes` folder into your project header directory and `#include` them. Also `embeddedRest` has dependency - [rapidjson](https://github.com/miloyip/rapidjson/) json-processor. `rapidjson` is also a header-only library so it is very easy to include it to your project.
