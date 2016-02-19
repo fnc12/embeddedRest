@@ -15,10 +15,15 @@
 #include <array>
 #include <sstream>
 #include <netdb.h>      //  gethostbyname,
+#include <iostream>
+#include <fcntl.h>
 #include "Response.hpp"
 #include "rapidjson/document.h"
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/writer.h"
+
+using std::cout;
+using std::endl;
 
 class UrlRequest{
 public:
@@ -27,6 +32,23 @@ public:
         std::string host;
     };
     struct JsonValueAdapter;
+    struct timeval timeout={30,0};
+    struct StringValueAdapter{
+        StringValueAdapter()=delete;
+        
+        template<class T>
+        StringValueAdapter(T t):
+        value([&t]{
+            std::stringstream ss;
+            ss<<t;
+            return std::move(ss.str());
+        }()){}
+        
+        StringValueAdapter(std::string str):
+        value(std::move(str)){}
+        
+        std::string value;
+    };
 protected:
     std::string _host;
     std::string _uri="/";
@@ -39,14 +61,9 @@ protected:
         rapidjson::StringBuffer buffer;
         rapidjson::Writer<decltype(buffer)> writer(buffer);
         value.Accept(writer);
-        _body=std::move(buffer.GetString());
+        _body=buffer.GetString();
         return *this;
     }
-    /*template<class T,class ...Args>
-    void parseArgsToJson(rapidjson::Document &d,T t,Args ...args);
-    void parseArgsToJson(rapidjson::Document &d){};
-    template<class T>
-    void parseArgToJson(rapidjson::Document &d,const T &t);*/
     
     static const std::string& crlf(){
         static std::string res="\r\n";
@@ -97,6 +114,36 @@ protected:
         }
     };
     typedef std::vector<MemoryBuffer> MemoryBuffers;
+    
+    static int connectTimeout(int s,sockaddr *address,int addressSize,struct timeval *tv){
+        ::connect(s,address,addressSize);
+        fd_set fdset;
+        FD_ZERO(&fdset);
+        FD_SET(s, &fdset);
+        return ::select(s + 1, nullptr, &fdset, nullptr, tv);
+    }
+    
+    static int recvtimeout(int s, char *buf, int len, struct timeval *tv){
+        fd_set fds;
+        int n;
+//        struct timeval tv;
+        
+        // set up the file descriptor set
+        FD_ZERO(&fds);
+        FD_SET(s, &fds);
+        
+        // set up the struct timeval for the timeout
+//        tv.tv_sec = timeout;
+//        tv.tv_usec = 0;
+        
+        // wait until timeout or data received
+        n = ::select(s+1, &fds, NULL, NULL, tv);
+        if (n == 0) return -2; // timeout!
+        if (n == -1) return -1; // error
+        
+        // data must be here, so do a normal recv()
+        return int(::recv(s, buf, len, 0));
+    }
 public:
     UrlRequest()=default;
     
@@ -110,7 +157,27 @@ public:
     UrlRequest& uri(Uri uri);
     
     template<class Uri>
-    UrlRequest& uri(Uri uri,std::vector<std::pair<std::string,std::string>>);
+    UrlRequest& uri(Uri uri,std::vector<std::pair<std::string,StringValueAdapter>> getParameters){
+        std::stringstream ss;
+        ss<<uri;
+        const auto getParametersCount=getParameters.size();
+        if(getParametersCount){
+            ss<<"?";
+            for(auto i=0;i<getParametersCount;++i){
+                auto &getParameter=getParameters[i];
+                ss<<getParameter.first<<"="<<getParameter.second.value;
+                if(i<getParametersCount-1){
+                    ss<<"&";
+                }
+            }
+        }
+        _uri=std::move(ss.str());
+        return *this;
+    }
+
+    void port(decltype(_port)value){
+        _port=value;
+    }
     
     template<class Method>
     UrlRequest& method(Method method);
@@ -118,7 +185,6 @@ public:
     UrlRequest& body(std::vector<std::pair<std::string,JsonValueAdapter>> jsonArguments){
         rapidjson::Document d;
         d.SetObject();
-//        this->parseArgsToJson(d, t, args...);
         for(auto &p:jsonArguments){
             const auto &value=p.second;
             switch(value.type()){
@@ -136,172 +202,113 @@ public:
     }
     
     template<class Header>
-    UrlRequest& addHeader(Header header);
+    UrlRequest& addHeader(Header header){
+        _headers.emplace_back(std::move(header));
+        return *this;
+    }
     
-    Response operator()() throw(HostIsNullException,Response::IncorrectStartLineException){
+    Response perform() throw(HostIsNullException,Response::IncorrectStartLineException){
         auto fd=::socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
         struct hostent *host;
         host = ::gethostbyname(_host.c_str());
         if(host){
-            /*struct timeval timeout;
-             timeout.tv_sec = 10;
-             timeout.tv_usec = 0;
-             
-             if (::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
-             sizeof(timeout)) < 0)
-             ::perror("setsockopt failed\n");
-             
-             if (::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
-             sizeof(timeout)) < 0)
-             ::perror("setsockopt failed\n");*/
-            //        fcntl(fd, F_SETFL, O_NONBLOCK);
-            
+            ::fcntl(fd, F_SETFL, O_NONBLOCK);
             sockaddr_in sockAddr;
             sockAddr.sin_port=htons(_port);
             sockAddr.sin_family=AF_INET;
             sockAddr.sin_addr.s_addr = decltype(sockAddr.sin_addr.s_addr)(*((unsigned long*)host->h_addr));
-            //    cout << "Connecting...\n";
-            ::connect(fd,(sockaddr*)(&sockAddr),sizeof(sockAddr));
-            /*if(::connect(fd,(sockaddr*)(&sockAddr),sizeof(sockAddr)) != 0){
-             cout << "Could not connect";
-             }*/
             auto connectionTimeoutHappened=false;
-            /*fd_set fdset;
-             FD_ZERO(&fdset);
-             FD_SET(fd, &fdset);
-             struct timeval timeout;
-             timeout.tv_sec = 10;
-             timeout.tv_usec = 0;
-             if (select(fd + 1, NULL, &fdset, NULL, &timeout) == 1)
-             {
-             int so_error;
-             socklen_t len = sizeof so_error;
-             
-             getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
-             
-             if (so_error == 0) {
-             printf("%s:%d is open\n", _host.c_str(), int(_port));
-             }else{
-             connectionTimeoutHappened=true;
-             }
-             }else{
-             connectionTimeoutHappened=true;
-             }*/
-            
-            MemoryBuffers buffers;
-            if(!connectionTimeoutHappened){
-                auto requestString=_method+" "+_uri+" HTTP/1.1"+crlf()+"Host: "+_host;
-                for(const auto &header:_headers){
-                    requestString+=crlf()+header;
-                }
-                //        requestString+="\r\nConnection: close";
-                //        requestString+="\r\nContent-Type: application/json";
-                //        requestString+="\r\nAccept: application/json";
-                if(_body.length()){
-                    requestString+=crlf()+"Content-Length: "+std::to_string(_body.length());
-                }
-                requestString+=crlf()+crlf();
-                /*auto bytesWrote=*/::send(fd,requestString.c_str(), requestString.length(),0);
-                if(_body.length()){
-                    ::send(fd, _body.c_str(), _body.length(), 0);
-                }
-                char buffer[10000];
-                long nDataLength;
-                while ((nDataLength = ::recv(fd,buffer,10000,0)) > 0){
-                    auto newBuffer=new char[nDataLength];
-                    ::memcpy((void*)newBuffer, (const void*)buffer, size_t(nDataLength));
-                    buffers.emplace_back((char*)newBuffer,int(nDataLength));
-                }
-            }
-            ::close(fd);
-            
-            if(!connectionTimeoutHappened){
-                char prevByte=-1;
-                decltype(buffers)::iterator bufferIt=buffers.begin();
-                decltype(decltype(buffers)::value_type::buffer) charIt=bufferIt->begin();
-                auto iterateResponseLambda=[&bufferIt,&charIt,&buffers,&prevByte](std::function<void(char,bool&)> f){
-                    auto stop=false;
-                    for(;bufferIt!=buffers.end();++bufferIt){
-                        //                cout<<"buffer index = "<<bufferIt-buffers.begin()<<endl;
-                        for(;charIt!=bufferIt->end();++charIt){
-                            auto c=*charIt;
-                            f(c,stop);
-                            if(stop){
-                                return;
-                            }
-                        }
-                        charIt=bufferIt->begin();
-                    }
-                };
-                
-                //  read start line..
-                std::string startLine;
-                iterateResponseLambda([&prevByte,&startLine](char c,bool &stop){
-                    startLine+=c;
-                    if(c==10){
-                        if(prevByte==13){
-                            startLine=startLine.substr(0,startLine.length()-2);
-                            prevByte=c;
-                            stop=true;
-                        }
-                    }
-                    prevByte=c;
-                });
-                ++charIt;
-                //        cout<<"startLine = *"<<startLine<<"*"<<endl;
-                
-                //  read headers..
-                std::string line;
-                std::vector<std::string> headers;
-                do{
-                    iterateResponseLambda([&prevByte,&line](char c,bool &stop){
-                        line+=c;
-                        if(c==10){
-                            if(prevByte==13){
-                                line=line.substr(0,line.length()-2);
-                                prevByte=c;
-                                stop=true;
-                            }
-                        }
-                        prevByte=c;
-                    });
-                    ++charIt;
-                    if(line.length()){
-                        headers.emplace_back(std::move(line));
-                        line.clear();
+            if(connectTimeout(fd, (sockaddr*)(&sockAddr), sizeof(sockAddr), &this->timeout)==1){
+                int so_error;
+                socklen_t len = sizeof so_error;
+                ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+                if (so_error == 0) {
+                    std::cout<<"connected"<<std::endl;
                     }else{
-                        break;
+                        std::cerr<<"error = "<<so_error<<std::endl;
+                        connectionTimeoutHappened=true;
                     }
-                }while(true);
-                /*cout<<"headers = "<<headers.size()<<endl;
-                 for(const auto &header:headers){
-                 cout<<"*"<<header<<"*"<<endl;
-                 }*/
-                
-                //  read body..
-                std::string body;
-                if(std::find(headers.begin(), headers.end(), "Transfer-Encoding: chunked")==headers.end()){
-                    std::stringstream bodyStream;
-                    for(;bufferIt!=buffers.end();){
-                        bodyStream.write(&*charIt, bufferIt->end()-charIt);
-                        ++bufferIt;
-                        charIt=bufferIt->begin();
+                    }else{
+                        connectionTimeoutHappened=true;
                     }
-                    body=std::move(bodyStream.str());
-                    bodyStream.flush();
-                    //            cout<<"body = *"<<body<<"*"<<endl;
-                    //            cout<<"body length = "<<body.length()<<endl;
-                }else{
-                    auto hexToInt=[](const std::string &s)->int{
-                        std::stringstream ss;
-                        ss<<std::hex<<s;
-                        int res;
-                        ss>>res;
-                        return res;
+                    
+                    MemoryBuffers buffers;
+                    if(!connectionTimeoutHappened){
+                        auto requestString=_method+" "+_uri+" HTTP/1.1"+crlf()+"Host: "+_host;
+                        for(const auto &header:_headers){
+                            requestString+=crlf()+header;
+                        }
+                        if(_body.length()){
+                            requestString+=crlf()+"Content-Length: "+std::to_string(_body.length());
+                        }
+                        requestString+=crlf()+crlf();
+                        auto bytesToWrite=requestString.length();
+                        auto bytesWrote=::send(fd,requestString.c_str(), bytesToWrite,0);
+                        if(bytesWrote==bytesToWrite){
+                            if(_body.length()){
+                                bytesToWrite=_body.length();
+                                bytesWrote=::send(fd, _body.c_str(), _body.length(), 0);
+                                if(bytesWrote!=bytesToWrite){
+                                    cout<<"wrote not whole body"<<endl;
+                                }
+                            }
+                            char buffer[10000];
+                            do{
+                                auto bytesReceived=recvtimeout(fd, buffer, 10000, &this->timeout);
+                                if(bytesReceived==0){
+                                    break;
+                                }else if(bytesReceived==-2){
+                                    return std::move(Response(408, "Request Timeout","{\"message\":\"Request Timeout\",\"status_code\":408}"));
+                                }else if(bytesReceived>0){
+                                    auto newBuffer=new char[bytesReceived];
+                                    ::memcpy((void*)newBuffer, (const void*)buffer, size_t(bytesReceived));
+                                    buffers.emplace_back((char*)newBuffer,int(bytesReceived));
+                                }
+                            }while(true);
+                        }else{
+                            cout<<"wrote not whole request"<<endl;
+                        }
+                    }
+                    ::close(fd);
+                    
+                    if(!connectionTimeoutHappened){
+                        char prevByte=-1;
+                        decltype(buffers)::iterator bufferIt=buffers.begin();
+                        decltype(decltype(buffers)::value_type::buffer) charIt=bufferIt->begin();
+                        auto iterateResponseLambda=[&bufferIt,&charIt,&buffers,&prevByte](std::function<void(char,bool&)> f){
+                            auto stop=false;
+                            for(;bufferIt!=buffers.end();++bufferIt){
+                                //                cout<<"buffer index = "<<bufferIt-buffers.begin()<<endl;
+                                for(;charIt!=bufferIt->end();++charIt){
+                                    auto c=*charIt;
+                                    f(c,stop);
+                                    if(stop){
+                                        return;
+                                    }
+                                }
+                                charIt=bufferIt->begin();
+                            }
                         };
-                        std::stringstream bodyStream;
+                        
+                        //  read start line..
+                        std::string startLine;
+                        iterateResponseLambda([&prevByte,&startLine](char c,bool &stop){
+                            startLine+=c;
+                            if(c==10){
+                                if(prevByte==13){
+                                    startLine=startLine.substr(0,startLine.length()-2);
+                                    prevByte=c;
+                                    stop=true;
+                                }
+                            }
+                            prevByte=c;
+                        });
+                        ++charIt;
+                        
+                        //  read headers..
+                        std::string line;
+                        std::vector<std::string> headers;
                         do{
-                            line.clear();
                             iterateResponseLambda([&prevByte,&line](char c,bool &stop){
                                 line+=c;
                                 if(c==10){
@@ -313,68 +320,104 @@ public:
                                 }
                                 prevByte=c;
                             });
-                            //                cout<<"line = *"<<line<<"*"<<endl;
-                            int chunkSize=hexToInt(line);
-                            //                cout<<"chunkSize = "<<chunkSize<<endl;
-                            if(!chunkSize){
+                            ++charIt;
+                            if(line.length()){
+                                headers.emplace_back(std::move(line));
+                                line.clear();
+                            }else{
                                 break;
                             }
-                            ++charIt;
-                            
+                        }while(true);
+                        
+                        //  read body..
+                        std::string body;
+                        if(std::find(headers.begin(), headers.end(), "Transfer-Encoding: chunked")==headers.end()){
+                            std::stringstream bodyStream;
                             for(;bufferIt!=buffers.end();){
-                                //                    string s(&*charIt, bufferIt->end()-charIt);
-                                //                    cout<<"s = *"<<s<<"*"<<endl;
-                                size_t bytesToRead=bufferIt->end()-charIt;
-                                if(bytesToRead>chunkSize){
-                                    bytesToRead=chunkSize;
+                                bodyStream.write(&*charIt, bufferIt->end()-charIt);
+                                ++bufferIt;
+                                charIt=bufferIt->begin();
+                            }
+                            body=std::move(bodyStream.str());
+                            bodyStream.flush();
+                        }else{
+                            auto hexToInt=[](const std::string &s)->int{
+                                std::stringstream ss;
+                                ss<<std::hex<<s;
+                                int res;
+                                ss>>res;
+                                return res;
+                            };
+                            std::stringstream bodyStream;
+                            do{
+                                line.clear();
+                                iterateResponseLambda([&prevByte,&line](char c,bool &stop){
+                                    line+=c;
+                                    if(c==10){
+                                        if(prevByte==13){
+                                            line=line.substr(0,line.length()-2);
+                                            prevByte=c;
+                                            stop=true;
+                                        }
+                                    }
+                                    prevByte=c;
+                                });
+                                int chunkSize=hexToInt(line);
+                                if(!chunkSize){
+                                    break;
                                 }
-                                bodyStream.write(&*charIt, bytesToRead);
-                                charIt+=bytesToRead;
+                                ++charIt;
+                                
+                                for(;bufferIt!=buffers.end();){
+                                    size_t bytesToRead=bufferIt->end()-charIt;
+                                    if(bytesToRead>chunkSize){
+                                        bytesToRead=chunkSize;
+                                    }
+                                    bodyStream.write(&*charIt, bytesToRead);
+                                    charIt+=bytesToRead;
+                                    if(charIt==bufferIt->end()){
+                                        ++bufferIt;
+                                        charIt=bufferIt->begin();
+                                    }
+                                    chunkSize-=bytesToRead;
+                                    if(!chunkSize){
+                                        break;
+                                    }
+                                }
+                                
+                                //  skip crlf..
+                                iterateResponseLambda([&prevByte,&line](char c,bool &stop){
+                                    if(c==10){
+                                        if(prevByte==13){
+                                            stop=true;
+                                        }
+                                    }
+                                    prevByte=c;
+                                });
+                                ++charIt;
                                 if(charIt==bufferIt->end()){
                                     ++bufferIt;
                                     charIt=bufferIt->begin();
                                 }
-                                chunkSize-=bytesToRead;
-                                if(!chunkSize){
-                                    break;
+                            }while(true);
+                            body=std::move(bodyStream.str());
+                            bodyStream.flush();
+                            std::string chuckSuffix=crlf()+'0'+crlf()+crlf();
+                            if(body.length()>=chuckSuffix.length()){
+                                const std::string bodySuffix=std::move(body.substr(body.length()-chuckSuffix.length()));
+                                if(bodySuffix==chuckSuffix){
+                                    body=std::move(body.substr(0,body.length()-chuckSuffix.length()));
                                 }
                             }
-                            
-                            //                cout<<"bodyStream = "<<bodyStream.str()<<endl;
-                            
-                            //  skip crlf..
-                            iterateResponseLambda([&prevByte,&line](char c,bool &stop){
-                                if(c==10){
-                                    if(prevByte==13){
-                                        stop=true;
-                                    }
-                                }
-                                prevByte=c;
-                            });
-                            ++charIt;
-                            if(charIt==bufferIt->end()){
-                                ++bufferIt;
-                                charIt=bufferIt->begin();
-                            }
-                        }while(true);
-                        body=std::move(bodyStream.str());
-                        bodyStream.flush();
-                        std::string chuckSuffix=crlf()+'0'+crlf()+crlf();
-                        if(body.length()>=chuckSuffix.length()){
-                            const std::string bodySuffix=std::move(body.substr(body.length()-chuckSuffix.length()));
-                            if(bodySuffix==chuckSuffix){
-                                body=std::move(body.substr(0,body.length()-chuckSuffix.length()));
-                            }
-                        }
                         }
                         return std::move(Response(startLine, std::move(headers), std::move(body)));
-                        }else{
-                            return std::move(Response(408, "Request Timeout","{\"message\":\"Request Timeout\",\"status_code\":408}"));
-                        }
-                        }else{
-                            throw HostIsNullException{};
-                        }
-                        }
+                    }else{
+                        return std::move(Response(408, "Request Timeout","{\"message\":\"Request Timeout\",\"status_code\":408}"));
+                    }
+                    }else{
+                        throw HostIsNullException{};
+                    }
+                    }
     
     UrlRequest& operator+(const HostEntry &hostEntry){
         this->host(hostEntry.host);
@@ -477,41 +520,14 @@ public:
     };
 };
 
-/*template<>
-void UrlRequest::parseArgToJson<std::pair<std::string,std::string>>(rapidjson::Document &d,const std::pair<std::string,std::string> &p);
-template<>
-void UrlRequest::parseArgToJson<std::pair<const char*,std::string>>(rapidjson::Document &d,const std::pair<const char*,std::string> &p);
-template<>
-void UrlRequest::parseArgToJson<std::pair<std::string,int>>(rapidjson::Document &d,const std::pair<std::string,int> &p);
-template<>
-void UrlRequest::parseArgToJson<std::pair<const char*,int>>(rapidjson::Document &d,const std::pair<const char*,int> &p);*/
-
 inline UrlRequest::HostEntry operator "" _host(const char *s, size_t l){
     return UrlRequest::HostEntry{std::string(s,l)};
 }
 
 #pragma mark - Implementation
 
-/*template<class T,class ...Args>
-void UrlRequest::parseArgsToJson(rapidjson::Document &d,T t,Args ...args){
-    this->parseArgToJson(d,t);
-    this->parseArgsToJson(d,args...);
-}*/
-
-/*template<class T,class ...Args>
-UrlRequest& UrlRequest::body(T t,Args ...args){
-    rapidjson::Document d;
-    d.SetObject();
-    this->parseArgsToJson(d, t, args...);
-    this->bodyJson(d);
-    return *this;
-}*/
-
-template<class Header>
-UrlRequest& UrlRequest::addHeader(Header header){
-    _headers.emplace_back(std::move(header));
-    return *this;
-}
+//template<class Header>
+//UrlRequest& UrlRequest::addHeader
 
 template<class Method>
 UrlRequest& UrlRequest::method(Method method){
@@ -525,25 +541,9 @@ UrlRequest& UrlRequest::uri(Uri uri){
     return *this;
 }
 
-template<class Uri>
-UrlRequest& UrlRequest::uri(Uri uri,std::vector<std::pair<std::string,std::string>> getParameters){
-    std::stringstream ss;
-    ss<<uri;
-    const auto getParametersCount=getParameters.size();
-    if(getParametersCount){
-        ss<<"?";
-        for(auto i=0;i<getParametersCount;++i){
-            auto &getParameter=getParameters[i];
-            ss<<getParameter.first<<"="<<getParameter.second;
-            if(i<getParametersCount-1){
-                ss<<"&";
-            }
-        }
-    }
-    _uri=std::move(ss.str());
-    return *this;
-}
-
+//template<class Uri>
+//UrlRequest& UrlRequest::uri
+                    
 template<class Host>
 UrlRequest& UrlRequest::host(Host host){
     _host=std::move(host);
