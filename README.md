@@ -82,7 +82,7 @@ Every `UrlRequest` instance has 30 seconds default timeout. If you want to chang
 UrlRequest request;
 request.timeout={10,0};     //  10 seconds and 0 microseconds..
 ```
-`timeout` property has `struct timeval` type. This type is declared in C standart library and represents time with microseconds precision.
+`timeout` property has `struct timeval` type. This type is declared in C standard library and represents time with microseconds precision.
 
 **Passing array as get parameter**
 
