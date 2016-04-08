@@ -91,7 +91,6 @@ If you want to pass array to url as get parameter using square braces notation (
 ```
 UrlRequest request;
 request.host("jako.online").uri("/api/v1/subscribes/my",{
-    {"access_token",accessToken},
     {"lang",Language::current()},
     {"type",std::vector<std::string>{
         "vk",
@@ -99,3 +98,4 @@ request.host("jako.online").uri("/api/v1/subscribes/my",{
     }},
 }).addHeader("Content-Type: application/json");
 ```
+Request url will be parsed to *jako.online/api/v1/subscribes/my?lang=ru&type[]=vk&type[]=company*
