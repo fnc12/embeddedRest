@@ -18,9 +18,7 @@
 #include <iostream>
 #include <fcntl.h>
 #include "Response.hpp"
-#include "rapidjson/document.h"
-#include "rapidjson/stringbuffer.h"
-#include "rapidjson/writer.h"
+#include "JsonValueAdapter.hpp"
 
 using std::cout;
 using std::endl;
@@ -31,9 +29,8 @@ public:
     struct HostEntry{
         std::string host;
     };
-    struct JsonValueAdapter;
     struct timeval timeout={30,0};
-    struct StringValueAdapter{
+    /*struct StringValueAdapter{
         StringValueAdapter()=delete;
         
         template<class T>
@@ -48,6 +45,44 @@ public:
         value(std::move(str)){}
         
         std::string value;
+    };*/
+    struct GetParameter{
+        
+        template<class T>
+        GetParameter(const std::string &name,T t):value(std::move(StringValueAdapter<T>{name,t}())){}
+        
+        const std::string value;
+        
+    protected:
+        template<class T>
+        struct StringValueAdapter{
+            const std::string name;
+            const T value;
+            
+            std::string operator()()const{
+                std::stringstream ss;
+                ss<<this->name<<"="<<this->value;
+                return std::move(ss.str());
+            }
+        };
+        
+        template<class T>
+        struct StringValueAdapter<std::vector<T>>{
+            const std::string name;
+            const std::vector<T> value;
+            
+            std::string operator()()const{
+                std::stringstream ss;
+                for(auto i=0;i<this->value.size();++i){
+                    const auto &obj=this->value[i];
+                    ss<<this->name<<"[]="<<obj;
+                    if(i<this->value.size()-1){
+                        ss<<"&";
+                    }
+                }
+                return std::move(ss.str());
+            }
+        };
     };
 protected:
     std::string _host;
@@ -56,14 +91,6 @@ protected:
     std::string _method="GET";
     std::string _body;
     std::vector<std::string> _headers={"Connection: close"};
-    
-    UrlRequest& bodyJson(const rapidjson::Value &value){
-        rapidjson::StringBuffer buffer;
-        rapidjson::Writer<decltype(buffer)> writer(buffer);
-        value.Accept(writer);
-        _body=buffer.GetString();
-        return *this;
-    }
     
     static const std::string& crlf(){
         static std::string res="\r\n";
@@ -145,7 +172,7 @@ protected:
         return int(::recv(s, buf, len, 0));
     }
 public:
-    UrlRequest()=default;
+    UrlRequest(decltype(_method) method="GET"):_method(method){};
     
     template<class Host,class Uri>
     UrlRequest(Host host,Uri uri);
@@ -157,7 +184,7 @@ public:
     UrlRequest& uri(Uri uri);
     
     template<class Uri>
-    UrlRequest& uri(Uri uri,std::vector<std::pair<std::string,StringValueAdapter>> getParameters){
+    UrlRequest& uri(Uri uri,std::vector<GetParameter> getParameters){
         std::stringstream ss;
         ss<<uri;
         const auto getParametersCount=getParameters.size();
@@ -165,7 +192,8 @@ public:
             ss<<"?";
             for(auto i=0;i<getParametersCount;++i){
                 auto &getParameter=getParameters[i];
-                ss<<getParameter.first<<"="<<getParameter.second.value;
+//                ss<<getParameter.first<<"="<<getParameter.second.value;
+                ss<<getParameter.value;
                 if(i<getParametersCount-1){
                     ss<<"&";
                 }
@@ -180,24 +208,14 @@ public:
     }
     
     template<class Method>
-    UrlRequest& method(Method method);
+    UrlRequest& method(Method method){
+        _method=std::move(method);
+        return *this;
+    }
     
     UrlRequest& body(std::vector<std::pair<std::string,JsonValueAdapter>> jsonArguments){
-        rapidjson::Document d;
-        d.SetObject();
-        for(auto &p:jsonArguments){
-            const auto &value=p.second;
-            switch(value.type()){
-                case rapidjson::kStringType:{
-                    d.AddMember(rapidjson::Value(p.first.c_str(),d.GetAllocator()).Move(), rapidjson::Value(p.second.string().c_str(),d.GetAllocator()).Move(), d.GetAllocator());
-                }break;
-                case rapidjson::kNumberType:{
-                    d.AddMember(rapidjson::Value(p.first.c_str(),d.GetAllocator()).Move(), rapidjson::Value(p.second.integer()).Move(), d.GetAllocator());
-                }break;
-                default:break;
-            }
-        }
-        this->bodyJson(d);
+        _body=JsonValueAdapter(std::move(jsonArguments)).toString();
+//        this->bodyJson(d);
         return *this;
     }
     
@@ -223,7 +241,7 @@ public:
                 socklen_t len = sizeof so_error;
                 ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
                 if (so_error == 0) {
-                    std::cout<<"connected"<<std::endl;
+//                    std::cout<<"connected"<<std::endl;
                     }else{
                         std::cerr<<"error = "<<so_error<<std::endl;
                         connectionTimeoutHappened=true;
@@ -423,101 +441,6 @@ public:
         this->host(hostEntry.host);
         return *this;
     }
-    
-    struct JsonValueAdapter{
-        JsonValueAdapter()=delete;
-        
-        JsonValueAdapter(std::string s){
-            _data=new decltype(s)(std::move(s));
-            _type=rapidjson::kStringType;
-        }
-        
-        JsonValueAdapter(const JsonValueAdapter &other):
-        _type(other._type){
-            switch(_type){
-                case rapidjson::kStringType:{
-                    _data=new std::string(other.string());
-                }break;
-                case rapidjson::kNumberType:{
-                    _data=new int(other.integer());
-                }break;
-                default:break;
-            }
-        }
-        JsonValueAdapter& operator=(const JsonValueAdapter &other){
-            this->clean();
-            _type=other._type;
-            switch(_type){
-                case rapidjson::kStringType:{
-                    _data=new std::string(other.string());
-                }break;
-                case rapidjson::kNumberType:{
-                    _data=new int(other.integer());
-                }break;
-                default:break;
-            }
-            return *this;
-        }
-        
-        JsonValueAdapter(JsonValueAdapter &&other):
-        _type(other._type),
-        _data(other._data){
-            other._type=rapidjson::kNullType;
-            other._data=nullptr;
-        }
-        
-        JsonValueAdapter& operator=(JsonValueAdapter &&other){
-            this->clean();
-            _data=other._data;
-            other._data=nullptr;
-            _type=other._type;
-            other._type=rapidjson::kNullType;
-            return *this;
-        }
-        
-        JsonValueAdapter(const char *s){
-            _data=new std::string(s);
-            _type=rapidjson::kStringType;
-        }
-        
-        JsonValueAdapter(int i){
-            _data=new decltype(i)(i);
-            _type=rapidjson::kNumberType;
-        }
-        
-        ~JsonValueAdapter(){
-            this->clean();
-        }
-        
-        int integer()const{
-            return *(int*)_data;
-        }
-        
-        const std::string& string()const{
-            return *(std::string*)_data;
-        }
-        
-        rapidjson::Type type()const{
-            return _type;
-        }
-    protected:
-        rapidjson::Type _type;
-        void *_data;
-        
-        void clean(){
-            switch(_type){
-                case rapidjson::kStringType:{
-                    auto stringPointer=(std::string*)_data;
-                    delete stringPointer;
-                }break;
-                case rapidjson::kNumberType:{
-                    auto intPointer=(int*)_data;
-                    delete intPointer;
-                }break;
-                default:break;
-            }
-        }
-    };
 };
 
 inline UrlRequest::HostEntry operator "" _host(const char *s, size_t l){
@@ -526,14 +449,8 @@ inline UrlRequest::HostEntry operator "" _host(const char *s, size_t l){
 
 #pragma mark - Implementation
 
-//template<class Header>
-//UrlRequest& UrlRequest::addHeader
-
-template<class Method>
-UrlRequest& UrlRequest::method(Method method){
-    _method=std::move(method);
-    return *this;
-}
+//template<class Method>
+//UrlRequest& UrlRequest::method(Method method)
 
 template<class Uri>
 UrlRequest& UrlRequest::uri(Uri uri){
