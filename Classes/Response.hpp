@@ -15,7 +15,9 @@
 
 class Response{
 public:
-    struct IncorrectStartLineException;
+    struct IncorrectStartLineException{
+        const std::string startLine;
+    };
 protected:
     std::string _body;
     std::vector<std::string> _headers;
@@ -81,8 +83,4 @@ public:
     const decltype(_statusDescription)& statusDescription() const{
         return _statusDescription;
     }
-    
-    struct IncorrectStartLineException{
-        const std::string startLine;
-    };
 };

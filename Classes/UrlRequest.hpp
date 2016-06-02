@@ -15,6 +15,7 @@
 #include <array>
 #include <sstream>
 #include <netdb.h>      //  gethostbyname,
+#include <arpa/inet.h>
 #include <iostream>
 #include <fcntl.h>
 #include "Response.hpp"
@@ -30,22 +31,6 @@ public:
         std::string host;
     };
     struct timeval timeout={30,0};
-    /*struct StringValueAdapter{
-        StringValueAdapter()=delete;
-        
-        template<class T>
-        StringValueAdapter(T t):
-        value([&t]{
-            std::stringstream ss;
-            ss<<t;
-            return std::move(ss.str());
-        }()){}
-        
-        StringValueAdapter(std::string str):
-        value(std::move(str)){}
-        
-        std::string value;
-    };*/
     struct GetParameter{
         
         template<class T>
@@ -215,7 +200,6 @@ public:
     
     UrlRequest& body(std::vector<std::pair<std::string,JsonValueAdapter>> jsonArguments){
         _body=JsonValueAdapter(std::move(jsonArguments)).toString();
-//        this->bodyJson(d);
         return *this;
     }
     
@@ -257,7 +241,11 @@ public:
                             requestString+=crlf()+header;
                         }
                         if(_body.length()){
-                            requestString+=crlf()+"Content-Length: "+std::to_string(_body.length());
+                            std::stringstream ss;
+                            ss<<_body.length();
+                            const auto bodyLengthString=std::move(ss.str());
+                            ss.flush();
+                            requestString+=crlf()+"Content-Length: "+bodyLengthString;
                         }
                         requestString+=crlf()+crlf();
                         auto bytesToWrite=requestString.length();
