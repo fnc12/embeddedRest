@@ -82,4 +82,20 @@ Every `UrlRequest` instance has 30 seconds default timeout. If you want to chang
 UrlRequest request;
 request.timeout={10,0};     //  10 seconds and 0 microseconds..
 ```
-`timeout` property has `struct timeval` type. This type is declared in C standart library and represents time with microseconds precision.
+`timeout` property has `struct timeval` type. This type is declared in C standard library and represents time with microseconds precision.
+
+**Passing array as get parameter**
+
+If you want to pass array to url as get parameter using square braces notation (example: *jako.online/api/v1/subscribes/my?lang=ru&type[]=vk&type[]=company*) you have to pass std::vector of your values to *uri* member function arguments. Example:
+
+```
+UrlRequest request;
+request.host("jako.online").uri("/api/v1/subscribes/my",{
+    {"lang",Language::current()},
+    {"type",std::vector<std::string>{
+        "vk",
+        "company",
+    }},
+}).addHeader("Content-Type: application/json");
+```
+Request url will be parsed to *jako.online/api/v1/subscribes/my?lang=ru&type[]=vk&type[]=company*
