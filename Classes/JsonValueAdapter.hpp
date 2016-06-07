@@ -14,9 +14,14 @@
 #include <map>
 #include <algorithm>
 #include <experimental/optional>
+#include <ctime>
 
 struct JsonValueAdapter{
     JsonValueAdapter()=delete;
+    
+    template<class T>
+    JsonValueAdapter(const T &t):
+    JsonValueAdapter(t.jsonObject()){}
 
     JsonValueAdapter(const char *s){
         _data=new std::string(s);
@@ -35,19 +40,26 @@ struct JsonValueAdapter{
         _type=(b)?rapidjson::kTrueType:rapidjson::kFalseType;
     }
     
-    /*template<class T>
-    JsonValueAdapter(std::experimental::optional<T> opt){
-        if(opt){
-            JsonValueAdapter other(opt.value());
+    JsonValueAdapter(const struct tm &timeValue,const std::string &format="%Y-%M-%D"):
+    JsonValueAdapter([&]{
+        char str[64];
+        ::strftime(str, sizeof(str), format.c_str(), &timeValue);
+        return std::string(str);
+    }()){}
+    
+    template<class T>
+    JsonValueAdapter(std::shared_ptr<T> ptr):_type(rapidjson::kNullType){
+        if(ptr){
+            JsonValueAdapter other(*ptr);
             *this=std::move(other);
         }else{
             _type=rapidjson::kNullType;
             _data=nullptr;
         }
-    }*/
+    }
     
     template<class T>
-    JsonValueAdapter(std::shared_ptr<T> ptr):_type(rapidjson::kNullType){
+    JsonValueAdapter(std::experimental::optional<T> ptr):_type(rapidjson::kNullType){
         if(ptr){
             JsonValueAdapter other(*ptr);
             *this=std::move(other);
@@ -80,7 +92,8 @@ struct JsonValueAdapter{
         Array_t a;
         a.reserve(v.size());
         for(auto &obj:v){
-            a.push_back(obj.jsonObject());
+//            a.push_back(obj.jsonObject());
+            a.push_back(JsonValueAdapter(obj));
         }
         return std::move(a);
     }())){}
