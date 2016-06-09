@@ -22,7 +22,7 @@ struct JsonValueAdapter{
     template<class T>
     JsonValueAdapter(const T &t):
     JsonValueAdapter(t.jsonObject()){}
-
+    
     JsonValueAdapter(const char *s){
         _data=new std::string(s);
         _type=rapidjson::kStringType;
@@ -32,20 +32,16 @@ struct JsonValueAdapter{
         _data=new decltype(d)(d);
         _type=rapidjson::kNumberType;
     }
-
+    
     JsonValueAdapter(int i):JsonValueAdapter(double(i)){}
-
+    
     JsonValueAdapter(bool b){
         _data=new decltype(b)(b);
         _type=(b)?rapidjson::kTrueType:rapidjson::kFalseType;
     }
     
-    JsonValueAdapter(const struct tm &timeValue,const std::string &format="%Y-%M-%D"):
-    JsonValueAdapter([&]{
-        char str[64];
-        ::strftime(str, sizeof(str), format.c_str(), &timeValue);
-        return std::string(str);
-    }()){}
+    JsonValueAdapter(const struct tm &timeValue,const std::string &format="%Y-%m-%d"):
+    JsonValueAdapter(dateToString(timeValue,format)){}
     
     template<class T>
     JsonValueAdapter(std::shared_ptr<T> ptr):_type(rapidjson::kNullType){
@@ -68,10 +64,10 @@ struct JsonValueAdapter{
             _data=nullptr;
         }
     }
-
+    
     typedef std::vector<std::pair<std::string,JsonValueAdapter>> Object_t;
     typedef std::vector<JsonValueAdapter> Array_t;
-
+    
     JsonValueAdapter(Object_t jsonObject){
         _data=new decltype(jsonObject)(std::move(jsonObject));
         _type=rapidjson::kObjectType;
@@ -92,7 +88,7 @@ struct JsonValueAdapter{
         Array_t a;
         a.reserve(v.size());
         for(auto &obj:v){
-//            a.push_back(obj.jsonObject());
+            //            a.push_back(obj.jsonObject());
             a.push_back(JsonValueAdapter(obj));
         }
         return std::move(a);
@@ -102,14 +98,14 @@ struct JsonValueAdapter{
         _data=new decltype(a)(std::move(a));
         _type=rapidjson::kArrayType;
     }
-
+    
     JsonValueAdapter(std::string s){
         _data=new decltype(s)(std::move(s));
         _type=rapidjson::kStringType;
     }
-
+    
     JsonValueAdapter(const JsonValueAdapter &other):
-            _type(other._type){
+    _type(other._type){
         switch(_type){
             case rapidjson::kStringType:{
                 _data=new std::string(other.string());
@@ -133,7 +129,7 @@ struct JsonValueAdapter{
             default:break;
         }
     }
-
+    
     JsonValueAdapter& operator=(const JsonValueAdapter &other){
         this->clean();
         _type=other._type;
@@ -161,14 +157,14 @@ struct JsonValueAdapter{
         }
         return *this;
     }
-
+    
     JsonValueAdapter(JsonValueAdapter &&other):
-            _type(other._type),
-            _data(other._data){
+    _type(other._type),
+    _data(other._data){
         other._type=rapidjson::kNullType;
         other._data=nullptr;
     }
-
+    
     JsonValueAdapter& operator=(JsonValueAdapter &&other){
         this->clean();
         _data=other._data;
@@ -177,23 +173,23 @@ struct JsonValueAdapter{
         other._type=rapidjson::kNullType;
         return *this;
     }
-
+    
     ~JsonValueAdapter(){
         this->clean();
     }
-
+    
     bool boolean()const{
         return *(bool*)_data;
     }
-
+    
     double dbl()const{
         return *(double*)_data;
     }
-
+    
     const std::string& string()const{
         return *(std::string*)_data;
     }
-
+    
     const Object_t& object()const{
         return *(Object_t*)_data;
     }
@@ -201,16 +197,16 @@ struct JsonValueAdapter{
     const Array_t& array()const{
         return *(Array_t*)_data;
     }
-
+    
     rapidjson::Type type()const{
         return _type;
     }
-
+    
     std::string toString()const{
         rapidjson::Document d;
         switch(_type){
             case rapidjson::kStringType:
-//                d.SetString(this->string().c_str(),int(this->string().length()));
+                //                d.SetString(this->string().c_str(),int(this->string().length()));
                 d.SetString(this->string().c_str(),d.GetAllocator());
                 break;
             case rapidjson::kNumberType:{
@@ -245,6 +241,12 @@ struct JsonValueAdapter{
         return buffer.GetString();
     }
     
+    static std::string dateToString(const struct tm &timeValue,const std::string &format="%Y-%m-%d"){
+        char str[64];
+        ::strftime(str, sizeof(str), format.c_str(), &timeValue);
+        return std::string(str);
+    }
+    
     static rapidjson::Document stringToJson(const std::string &jsonString){
         rapidjson::Document d;
         d.Parse(jsonString.c_str());
@@ -253,7 +255,7 @@ struct JsonValueAdapter{
 protected:
     rapidjson::Type _type;
     void *_data;
-
+    
     void clean(){
         switch(_type){
             case rapidjson::kStringType:{
@@ -325,7 +327,7 @@ protected:
             }
         }
     }
-
+    
     static void encodeJsonObject(const Object_t &obj,rapidjson::Value &d,rapidjson::Document::AllocatorType &allocator){
         for(auto &p:obj){
             const auto &value=p.second;
