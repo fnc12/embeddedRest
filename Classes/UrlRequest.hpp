@@ -18,6 +18,9 @@
 #include <arpa/inet.h>
 #include <iostream>
 #include <fcntl.h>
+#include <functional>
+#include <sys/time.h>
+#include <fstream>
 #include "Response.hpp"
 #include "JsonValueAdapter.hpp"
 
@@ -68,6 +71,90 @@ public:
                 return std::move(ss.str());
             }
         };
+    };
+    struct MultipartAdapter{
+        
+        std::string body(){
+            return std::move(this->stream.str());
+        }
+        
+        const std::string &boundary() const{
+            return _boundary;
+        }
+        
+        void addFormField(const std::string &name,const std::string &value){
+            this->stream<<"--"<<_boundary<<crlf();
+            this->stream<<"Content-Disposition: form-data; name=\""<<name<<"\""<<crlf();
+            this->stream<<"Content-Type: text/plain; charset="<<this->charset<<crlf();
+            this->stream<<crlf();
+            this->stream<<value<<crlf();
+        }
+        
+        void addFilePart(const std::string &fieldName,
+                         const std::string &filepath,
+                         const std::string &fileName,
+                         const std::string &mimeType)
+        {
+            auto count=fileSize(filepath);
+            std::ifstream file(filepath);
+            if(file){
+                this->stream<<"--"<<_boundary<<crlf();
+                this->stream<<"Content-Disposition: form-data; name=\""<<fieldName<<"\"; filename=\""<<fileName<<"\""<<crlf();
+                this->stream<<"Content-Type: "<<mimeType<<crlf();
+                this->stream<<"Content-Transfer-Encoding: binary"<<crlf();
+                this->stream<<crlf();
+                stream_copy_n(file, count, this->stream);
+                file.close();
+                this->stream<<crlf();
+            }else{
+                std::cerr<<"failed to open file at *"<<filepath<<"*"<<std::endl;
+            }
+        }
+        
+    protected:
+        friend class UrlRequest;
+        
+        MultipartAdapter():charset("UTF-8"){}
+        
+        std::stringstream stream;
+        std::string charset;
+        std::string _boundary=std::move(generateBoundary());
+        
+        static std::string generateBoundary(){
+            struct timeval tv;
+            ::gettimeofday(&tv, nullptr);
+            std::stringstream ss;
+            ss<<"==="<<tv.tv_sec<<"_"<<tv.tv_usec<<"===";
+            return std::move(ss.str());
+        }
+        
+        void finish(){
+            this->stream<<crlf();
+            this->stream<<"--"<<_boundary<<"--"<<crlf();
+        }
+        
+        size_t fileSize(const std::string &filepath){
+            std::ifstream file( filepath, std::ios::binary | std::ios::ate);
+            if(file){
+                return file.tellg();
+            }else{
+                return 0;
+            }
+        }
+        
+        void stream_copy_n(std::istream & in, std::size_t count, std::ostream & out){
+            const std::size_t buffer_size = 4096;
+            char buffer[buffer_size];
+            while(count > buffer_size)
+            {
+                in.read(buffer, buffer_size);
+                out.write(buffer, buffer_size);
+                count -= buffer_size;
+            }
+            
+            in.read(buffer, count);
+            out.write(buffer, count);
+        }
     };
 protected:
     std::string _host;
@@ -135,21 +222,50 @@ protected:
         return ::select(s + 1, nullptr, &fdset, nullptr, tv);
     }
     
+    static int sendInLoop(int s,const char *buf,size_t len){
+        auto bytesToWrite=len;
+        size_t bytesWrote=0;
+        while(bytesWrote != bytesToWrite){
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(s, &fds);
+            
+            auto n = ::select(s+1, nullptr, &fds, nullptr, nullptr);
+            switch(n){
+                case 0:return -2;
+                default:return -1;
+                case 1:
+                    auto bytesWroteThisTime = ::send(s, (const void*)(buf+bytesWrote), bytesToWrite, 0);
+                    cout<<"bytesWroteThisTime = "<<bytesWroteThisTime<<endl;
+                    if(bytesWroteThisTime > 0){
+                        bytesWrote += bytesWroteThisTime;
+                        bytesToWrite -= bytesWroteThisTime;
+                    }else{
+                        return -1;
+                    }
+                    break;
+            }
+        }
+        return 0;
+        /*bytesWrote=::send(fd, _body.c_str()+bytesWrote, bytesToWrite, 0);
+        while(bytesWrote!=bytesToWrite){
+            //                                    cout<<"wrote not whole body"<<endl;
+            bytesToWrite -= bytesWrote;
+            cout<<"bytesWrote "<<bytesWrote<<" instead of "<<bytesToWrite<<endl;
+            bytesWrote=::send(fd, _body.c_str()+bytesWrote, bytesToWrite, 0);
+        }*/
+    }
+    
     static int recvtimeout(int s, char *buf, int len, struct timeval *tv){
         fd_set fds;
         int n;
-//        struct timeval tv;
         
         // set up the file descriptor set
         FD_ZERO(&fds);
         FD_SET(s, &fds);
         
-        // set up the struct timeval for the timeout
-//        tv.tv_sec = timeout;
-//        tv.tv_usec = 0;
-        
         // wait until timeout or data received
-        n = ::select(s+1, &fds, NULL, NULL, tv);
+        n = ::select(s+1, &fds, nullptr, nullptr, tv);
         if (n == 0) return -2; // timeout!
         if (n == -1) return -1; // error
         
@@ -177,7 +293,6 @@ public:
             ss<<"?";
             for(auto i=0;i<getParametersCount;++i){
                 auto &getParameter=getParameters[i];
-//                ss<<getParameter.first<<"="<<getParameter.second.value;
                 ss<<getParameter.value;
                 if(i<getParametersCount-1){
                     ss<<"&";
@@ -185,6 +300,17 @@ public:
             }
         }
         _uri=std::move(ss.str());
+        return *this;
+    }
+    
+    UrlRequest& url(const std::string &value){
+        std::string prefix="://";
+        auto prefixPos=value.find(prefix);
+        auto prefixEndPos=prefixPos+prefix.length();
+        auto urlWithoutProtocol=value.substr(prefixEndPos,value.length()-prefixEndPos);
+        auto firstSlashPos=urlWithoutProtocol.find('/');
+        this->host(urlWithoutProtocol.substr(0,firstSlashPos));
+        this->uri(urlWithoutProtocol.substr(firstSlashPos,urlWithoutProtocol.length()-firstSlashPos));
         return *this;
     }
 
@@ -198,8 +324,17 @@ public:
         return *this;
     }
     
-    UrlRequest& body(std::vector<std::pair<std::string,JsonValueAdapter>> jsonArguments){
+    UrlRequest& body(JsonValueAdapter::Object_t jsonArguments){
         _body=JsonValueAdapter(std::move(jsonArguments)).toString();
+        return *this;
+    }
+    
+    UrlRequest& bodyMultipart(std::function<void(MultipartAdapter&)> f){
+        MultipartAdapter multipartAdapter;
+        f(multipartAdapter);
+        multipartAdapter.finish();
+        _body=std::move(multipartAdapter.body());
+        _headers.push_back("Content-Type: multipart/form-data; boundary="+multipartAdapter.boundary());
         return *this;
     }
     
@@ -252,11 +387,16 @@ public:
                         auto bytesWrote=::send(fd,requestString.c_str(), bytesToWrite,0);
                         if(bytesWrote==bytesToWrite){
                             if(_body.length()){
-                                bytesToWrite=_body.length();
-                                bytesWrote=::send(fd, _body.c_str(), _body.length(), 0);
-                                if(bytesWrote!=bytesToWrite){
-                                    cout<<"wrote not whole body"<<endl;
-                                }
+                                sendInLoop(fd, _body.c_str(), int(_body.length()));
+                                /*bytesToWrite=_body.length();
+                                bytesWrote=0;
+                                bytesWrote=::send(fd, _body.c_str()+bytesWrote, bytesToWrite, 0);
+                                while(bytesWrote!=bytesToWrite){
+//                                    cout<<"wrote not whole body"<<endl;
+                                    bytesToWrite -= bytesWrote;
+                                    cout<<"bytesWrote "<<bytesWrote<<" instead of "<<bytesToWrite<<endl;
+                                    bytesWrote=::send(fd, _body.c_str()+bytesWrote, bytesToWrite, 0);
+                                }*/
                             }
                             char buffer[10000];
                             do{
