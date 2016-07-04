@@ -21,6 +21,7 @@
 #include <functional>
 #include <sys/time.h>
 #include <fstream>
+#include <sys/ioctl.h>
 #include "Response.hpp"
 #include "JsonValueAdapter.hpp"
 
@@ -236,10 +237,13 @@ protected:
                 default:return -1;
                 case 1:
                     auto bytesWroteThisTime = ::send(s, (const void*)(buf+bytesWrote), bytesToWrite, 0);
-                    cout<<"bytesWroteThisTime = "<<bytesWroteThisTime<<endl;
+//                    cout<<"bytesWroteThisTime = "<<bytesWroteThisTime<<endl;
                     if(bytesWroteThisTime > 0){
                         bytesWrote += bytesWroteThisTime;
                         bytesToWrite -= bytesWroteThisTime;
+                        if(0==bytesToWrite){
+                            return 0;
+                        }
                     }else{
                         return -1;
                     }
@@ -256,7 +260,7 @@ protected:
         }*/
     }
     
-    static int recvtimeout(int s, char *buf, int len, struct timeval *tv){
+    static int recvtimeout(int s, char *buf, int len, struct timeval *tv, bool *receivedAll){
         fd_set fds;
         int n;
         
@@ -269,8 +273,16 @@ protected:
         if (n == 0) return -2; // timeout!
         if (n == -1) return -1; // error
         
+        int bytesToRead;
+        ::ioctl(s,FIONREAD,&bytesToRead);
+        cout<<"bytesToRead = "<<bytesToRead<<endl;
+        
         // data must be here, so do a normal recv()
-        return int(::recv(s, buf, len, 0));
+        auto res=int(::recv(s, buf, len, 0));
+        if(receivedAll){
+            *receivedAll = bytesToRead==res;
+        }
+        return res;
     }
 public:
     UrlRequest(decltype(_method) method="GET"):_method(method){};
@@ -400,7 +412,9 @@ public:
                             }
                             char buffer[10000];
                             do{
-                                auto bytesReceived=recvtimeout(fd, buffer, 10000, &this->timeout);
+                                bool receivedAll=false;
+                                auto bytesReceived=recvtimeout(fd, buffer, 10000, &this->timeout, &receivedAll);
+                                cout<<"bytesReceived = "<<bytesReceived<<", receivedAll = "<<receivedAll<<endl;
                                 if(bytesReceived==0){
                                     break;
                                 }else if(bytesReceived==-2){
@@ -409,6 +423,9 @@ public:
                                     auto newBuffer=new char[bytesReceived];
                                     ::memcpy((void*)newBuffer, (const void*)buffer, size_t(bytesReceived));
                                     buffers.emplace_back((char*)newBuffer,int(bytesReceived));
+                                    if(receivedAll){
+                                        break;
+                                    }
                                 }
                             }while(true);
                         }else{
