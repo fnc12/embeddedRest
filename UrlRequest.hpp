@@ -315,6 +315,23 @@ public:
         return *this;
     }
     
+    /**
+     *  This is for settings body like "key=value&key2=value2&...".
+     */
+    /*UrlRequest& bodyKeyValue(std::vector<GetParameter> getParametersInBody){
+        std::stringstream ss;
+        const auto getParametersCount=getParametersInBody.size();
+        for(auto i=0;i<getParametersCount;++i){
+            auto &getParameter=getParametersInBody[i];
+            ss<<getParameter.value;
+            if(i<getParametersCount-1){
+                ss<<"&";
+            }
+        }
+        _body=std::move(ss.str());
+        return *this;
+    }*/
+    
     UrlRequest& url(const std::string &value){
         std::string prefix="://";
         auto prefixPos=value.find(prefix);
@@ -336,7 +353,7 @@ public:
         return *this;
     }
     
-    UrlRequest& body(JsonValueAdapter::Object_t jsonArguments){
+    UrlRequest& bodyJson(JsonValueAdapter::Object_t jsonArguments){
         _body=JsonValueAdapter(std::move(jsonArguments)).toString();
         return *this;
     }
@@ -423,9 +440,9 @@ public:
                                     auto newBuffer=new char[bytesReceived];
                                     ::memcpy((void*)newBuffer, (const void*)buffer, size_t(bytesReceived));
                                     buffers.emplace_back((char*)newBuffer,int(bytesReceived));
-                                    if(receivedAll){
+                                    /*if(receivedAll){
                                         break;
-                                    }
+                                    }*/
                                 }
                             }while(true);
                         }else{
