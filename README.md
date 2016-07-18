@@ -1,6 +1,8 @@
 # embeddedRest
 A little library for making url requests in C++.
 
+# warning: do not use embeddedRest on iOS if you are gonna post ypuryour app to the App Store - embeddedRest doesn't have IPv6 support so your app will be rejected.
+
 It allows to send synchronous HTTP 1.1 requests and gives pretty simple interface to specify request parameters such as 
 
 * HTTP method
