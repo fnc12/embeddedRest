@@ -536,21 +536,32 @@ public:
                 auto charIt=bufferIt->begin();
                 auto iterateResponseLambda=[&bufferIt,&charIt,&buffers,&prevByte](std::function<void(char,bool&)> f){
                     auto stop=false;
-                    for(;bufferIt!=buffers.end();++bufferIt){
-                        //                cout<<"buffer index = "<<bufferIt-buffers.begin()<<endl;
-                        for(;charIt!=bufferIt->end();++charIt){
-                            auto c=*charIt;
-                            f(c,stop);
-                            if(stop){
+                    while (!stop) {
+                        // "while" instead of "if" in case of empty buffer
+                        while (charIt == bufferIt->end()) {
+                            if (bufferIt == buffers.end()) {
+                                // FIXME: shouldn't happen -- throw exception?
                                 return;
                             }
-                        }
+                            ++bufferIt;
                         charIt=bufferIt->begin();
+                    }
+                        // cout<<"buffer index = "<<bufferIt-buffers.begin()<<endl;
+
+                        // at this point, charIt points to a valid char.
+                        // so we can pass it into the user function.
+                        // We increment charIt since the user function
+                        // consumed the character.
+
+                        auto c = *charIt;
+                        ++charIt;
+                        f(c, stop);
                     }
                 };
                 
                 //  read start line..
                 std::string startLine;
+                prevByte = -1;
                 iterateResponseLambda([&prevByte,&startLine](char c,bool &stop){
                     startLine+=c;
                     if(c==10){
@@ -562,12 +573,12 @@ public:
                     }
                     prevByte=c;
                 });
-                ++charIt;
                 
                 //  read headers..
                 std::string line;
                 std::vector<std::string> headers;
                 do{
+                    prevByte = -1;
                     iterateResponseLambda([&prevByte, &line](char c, bool &stop){
                         line += c;
                         if (c == 10){
@@ -579,7 +590,6 @@ public:
                         }
                         prevByte = c;
                     });
-                    ++charIt;
                     if (line.length()){
                         headers.emplace_back(std::move(line));
                         line.clear();
@@ -613,6 +623,7 @@ public:
                     std::stringstream bodyStream;
                     do{
                         line.clear();
+                        prevByte = -1;
                         iterateResponseLambda([&prevByte, &line](char c, bool &stop){
                             line += c;
                             if (c == 10){
@@ -628,7 +639,6 @@ public:
                         if (!chunkSize){
                             break;
                         }
-                        ++charIt;
                         
                         for (; bufferIt != buffers.end();){
                             size_t bytesToRead = bufferIt->end() - charIt;
@@ -648,6 +658,7 @@ public:
                         }
                         
                         //  skip crlf..
+                        prevByte = -1;
                         iterateResponseLambda([&prevByte, &line](char c, bool &stop){
                             if (c == 10){
                                 if (prevByte == 13){
@@ -656,7 +667,6 @@ public:
                             }
                             prevByte = c;
                         });
-                        ++charIt;
                         if (charIt == bufferIt->end()){
                             ++bufferIt;
                             charIt = bufferIt->begin();
