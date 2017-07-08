@@ -19,11 +19,13 @@ public:
         const std::string startLine;
     };
 protected:
-    std::string _body;
-    std::vector<std::string> _headers;
-    std::string _httpVersion;
     int _statusCode;
     std::string _statusDescription;
+    std::vector<std::string> _headers;
+    std::string _body;
+
+    std::string _httpVersion;
+
     
     static void parseStartLine(const std::string &startLine,
                                decltype(_httpVersion) &httpVersion,

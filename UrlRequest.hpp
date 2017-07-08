@@ -328,6 +328,7 @@ protected:
     }
     
     static int recvtimeout(int s, char *buf, int len, struct timeval *tv, bool *receivedAll){
+        (void)receivedAll;
         fd_set fds;
         int n;
         
@@ -371,10 +372,10 @@ public:
     UrlRequest& uri(Uri uri,std::vector<GetParameter> getParameters){
         std::stringstream ss;
         ss<<uri;
-        const auto getParametersCount=getParameters.size();
+        const size_t getParametersCount=getParameters.size();
         if(getParametersCount){
             ss<<"?";
-            for(auto i=0;i<getParametersCount;++i){
+            for(size_t i=0;i<getParametersCount;++i){
                 auto &getParameter=getParameters[i];
                 ss<<getParameter.value;
                 if(i<getParametersCount-1){
@@ -496,8 +497,8 @@ public:
                     requestString+=crlf()+"Content-Length: "+bodyLengthString;
                 }
                 requestString+=crlf()+crlf();
-                auto bytesToWrite=requestString.length();
-                auto bytesWrote=::send(fd,requestString.c_str(), bytesToWrite,0);
+                ssize_t bytesToWrite= (ssize_t)requestString.length();
+                ssize_t bytesWrote=::send(fd,requestString.c_str(), bytesToWrite,0);
                 if(bytesWrote==bytesToWrite){
                     if(_body.length()){
                         sendInLoop(fd, _body.c_str(), int(_body.length()));
@@ -641,7 +642,7 @@ public:
                         }
                         
                         for (; bufferIt != buffers.end();){
-                            size_t bytesToRead = bufferIt->end() - charIt;
+                            auto bytesToRead = bufferIt->end() - charIt;
                             if (bytesToRead>chunkSize){
                                 bytesToRead = chunkSize;
                             }
@@ -707,7 +708,7 @@ inline UrlRequest::HostEntry operator "" _host(const char *s, size_t l){
 }
 #endif
                     
-#pragma mark - Implementation
+//#pragma mark - Implementation
                     
                     //template<class Method>
                     //UrlRequest& UrlRequest::method(Method method)
